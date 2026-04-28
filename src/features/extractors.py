@@ -130,16 +130,19 @@ def extract_shape_features(mask: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 def extract_features(image_rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """
-    Construit le vecteur de caractéristiques complet :
-      - Couleur  : 512 valeurs  (histogramme HSV)
-      - Texture  :  20 valeurs  (GLCM Haralick)
+    Construit le vecteur de caractéristiques pour les modèles ML (RF/SVM) :
+      - Couleur  : 512 valeurs  (histogramme HSV 3D)
+      - Texture  :  20 valeurs  (GLCM Haralick × 4 angles)
       - Forme    :  10 valeurs  (Hu Moments + métriques)
-    Total : 566 dimensions.
+    Total : 542 dimensions — compatible avec les modèles .pkl entraînés.
+
+    Note : extract_rgb_histogram() (24 dims) est disponible séparément
+    pour visualisation/comparaison dans le notebook, mais n'est PAS inclus
+    ici pour rester compatible avec les scalers et modèles sauvegardés.
     """
-    rgb     = extract_rgb_histogram(image_rgb, mask)      #  24
     color   = extract_color_histogram(image_rgb, mask)    # 512
     texture = extract_glcm_texture(image_rgb, mask)       #  20
     shape   = extract_shape_features(mask)                #  10
 
-    return np.concatenate([rgb, color, texture, shape]).astype(np.float32)
+    return np.concatenate([color, texture, shape]).astype(np.float32)
 
