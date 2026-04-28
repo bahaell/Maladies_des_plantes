@@ -88,92 +88,94 @@ def load_models():
 # ===========================================================================
 
 def _gradcam_method1(model, img_tensor, n_classes):
-    """Méthode 1 : Grad-CAM classique via recherche récursive de out_relu."""
-    last_conv_layer = None
-    # Chercher dans toutes les couches (plat + hiérarchique)
-    for layer in model.layers:
-        if layer.name == "out_relu":
-            last_conv_layer = layer
-            break
-        if isinstance(layer, tf.keras.Model):
-            for sublayer in layer.layers:
-                if sublayer.name == "out_relu":
-                    last_conv_layer = sublayer
-                    break
-        if last_conv_layer:
-            break
-
-    if last_conv_layer is None:
-        return None
-
-    # Construire grad_model à 2 sorties avec l'output de la couche trouvée
+    """Méthode 1 : Grad-CAM classique via out_relu."""
     try:
+        last_conv_layer = None
+        for layer in model.layers:
+            if layer.name == "out_relu":
+                last_conv_layer = layer
+                break
+            if isinstance(layer, tf.keras.Model):
+                for sublayer in layer.layers:
+                    if sublayer.name == "out_relu":
+                        last_conv_layer = sublayer
+                        break
+            if last_conv_layer:
+                break
+
+        if last_conv_layer is None:
+            return None
+
         grad_model = tf.keras.Model(
             inputs=model.inputs,
             outputs=[last_conv_layer.output, model.output]
         )
-    except Exception:
+
+        with tf.GradientTape() as tape:
+            tape.watch(img_tensor)
+            conv_out, preds = grad_model(img_tensor, training=False)
+            top_class = tf.argmax(preds[0])
+            one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
+            loss      = tf.reduce_sum(preds * one_hot)
+
+        grads = tape.gradient(loss, conv_out)
+        if grads is None:
+            return None
+
+        pooled  = tf.reduce_mean(grads, axis=(0, 1, 2))
+        heatmap = tf.nn.relu(
+            tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
+        ).numpy()
+
+        if heatmap.max() > 1e-8:
+            return (heatmap / heatmap.max()).astype(np.float32)
         return None
 
-    with tf.GradientTape() as tape:
-        tape.watch(img_tensor)
-        conv_out, preds = grad_model(img_tensor, training=False)
-        top_class  = tf.argmax(preds[0])
-        one_hot    = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
-        loss       = tf.reduce_sum(preds * one_hot)
-
-    grads = tape.gradient(loss, conv_out)
-    if grads is None:
+    except Exception as e:
+        print(f"  Méthode 1 échouée : {type(e).__name__}")
         return None
-
-    pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
-    heatmap = tf.nn.relu(
-        tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
-    ).numpy()
-
-    if heatmap.max() > 1e-8:
-        return (heatmap / heatmap.max()).astype(np.float32)
-    return None
 
 
 def _gradcam_method2(model, img_tensor, n_classes):
     """Méthode 2 : Grad-CAM via sous-modèle MobileNetV2 entier."""
-    mobilenet_layer = None
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
-            mobilenet_layer = layer
-            break
-
-    if mobilenet_layer is None:
-        return None
-
     try:
+        mobilenet_layer = None
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
+                mobilenet_layer = layer
+                break
+
+        if mobilenet_layer is None:
+            return None
+
         grad_model = tf.keras.Model(
             inputs=model.inputs,
             outputs=[mobilenet_layer.output, model.output]
         )
-    except Exception:
+
+        with tf.GradientTape() as tape:
+            tape.watch(img_tensor)
+            conv_out, preds = grad_model(img_tensor, training=False)
+            top_class = tf.argmax(preds[0])
+            one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
+            loss      = tf.reduce_sum(preds * one_hot)
+
+        grads = tape.gradient(loss, conv_out)
+        if grads is None:
+            return None
+
+        pooled  = tf.reduce_mean(grads, axis=(0, 1, 2))
+        heatmap = tf.nn.relu(
+            tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
+        ).numpy()
+
+        if heatmap.max() > 1e-8:
+            return (heatmap / heatmap.max()).astype(np.float32)
         return None
 
-    with tf.GradientTape() as tape:
-        tape.watch(img_tensor)
-        conv_out, preds = grad_model(img_tensor, training=False)
-        top_class = tf.argmax(preds[0])
-        one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
-        loss      = tf.reduce_sum(preds * one_hot)
-
-    grads = tape.gradient(loss, conv_out)
-    if grads is None or conv_out.shape[-1] is None:
+    except Exception as e:
+        print(f"  Méthode 2 échouée : {type(e).__name__}")
         return None
-
-    pooled  = tf.reduce_mean(grads, axis=(0, 1, 2))
-    heatmap = tf.nn.relu(
-        tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
-    ).numpy()
-
-    if heatmap.max() > 1e-8:
-        return (heatmap / heatmap.max()).astype(np.float32)
-    return None
 
 
 def _gradcam_method3_saliency(model, img_tensor, n_classes):
