@@ -1,0 +1,4 @@
+Modèle,Accuracy (%),Précision (%),Rappel (%),F1-score (%),Entraînement (s),Inférence Test (s)
+Random Forest,89.04,89.1,89.04,88.79,5.5,0.09
+SVM (RBF),87.33,87.57,87.33,87.37,44.6,5.61
+MobileNetV2 (DL),93.59,93.85,93.59,93.57,0.0,34.64

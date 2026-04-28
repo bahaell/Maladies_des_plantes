@@ -1,0 +1,25 @@
+# Environnements virtuels
+venv/
+env/
+.env
+
+# Fichiers cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Données (très lourdes)
+data/raw/
+data/processed/
+data/zip/
+
+# Modèles volumineux
+models/
+
+# Fichiers générés par le système / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/

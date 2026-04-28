@@ -1,0 +1,22 @@
+ref                                                       title                                              size  lastUpdated                 downloadCount  voteCount  usabilityRating  
+--------------------------------------------------------  -------------------------------------------  ----------  --------------------------  -------------  ---------  ---------------  
+abdallahalidev/plantvillage-dataset                       PlantVillage Dataset                         4371949460  2019-09-01 11:52:26.883000         105369        926  0.875            
+emmarex/plantdisease                                      PlantVillage Dataset                          689512690  2018-10-30 01:16:23.440000         151508       1113  0.5625           
+mohitsingh1804/plantvillage                               PlantVillage                                  857351099  2021-08-20 01:08:58.493000          12329         79  0.625            
+soumiknafiul/plantvillage-dataset-labeled                 PlantVillage Dataset (Labeled)                916638156  2020-06-01 18:06:27.453000           1768         42  0.875            
+moazeldsokyx/plantvillage                                 PlantVillage                                  344545657  2023-08-09 19:52:28.153000           1602         17  0.625            
+aarishasifkhan/plantvillage-potato-disease-dataset        Potato Disease Data | PlantVillage             39683614  2024-04-25 08:04:52.190000           2372         18  0.75             
+sebastianpalaciob/plantvillage-for-object-detection-yolo  PlantVillage for object detection YOLO        869084339  2024-07-10 02:41:59.280000           2649         42  1                
+charuchaudhry/plantvillage-tomato-leaf-dataset            plantvillage Tomato leaf dataset              464944524  2019-03-21 20:48:27.057000           4671         55  0.3125           
+siddhantsadangi/plantvillagedataset                       PlantVillage-Dataset                         3289432320  2019-02-07 12:12:13.443000            400         13  0.64705884       
+bulentsiyah/plantvillage                                  PlantVillage Dataset Gray 224*224 (50 each)   164695584  2019-07-27 22:01:36.573000            684         56  0.75             
+moazawadali/plantvillage-tomato                           PlantVillage-Tomato                           290302082  2024-03-28 16:46:24.010000            161         13  0.5              
+lextoumbourou/plantvillageapplecolor                      plantvillage-apple-color                       47207307  2020-04-04 06:07:25.880000            774         17  0.4375           
+nirmalsankalana/plant-diseases-training-dataset           Plant Leaf Diseases Training Dataset         1932522639  2025-02-16 07:45:17.733000           4705         91  0.875            
+smaranjitghose/corn-or-maize-leaf-disease-dataset         Corn or Maize Leaf Disease Dataset            168591426  2020-11-11 13:39:07.767000          27284        269  0.875            
+nafishamoin/new-bangladeshi-crop-disease                  New Bangladeshi Crop Disease                 2520068131  2022-09-27 08:35:14.790000           4537         69  0.8125           
+shankaraditya0693/plantvillage                            PlantVillage                                  864289055  2021-09-30 20:10:25.880000             83          3  0.3125           
+shubham2703/five-crop-diseases-dataset                    Five Crop Diseases Dataset                   4651502464  2023-09-23 06:41:04.220000           3262         33  0.9375           
+divyasharma20/plantv                                      PlantVillage Dataset                          864733154  2020-04-04 21:31:28.710000            510          5  0.4375           
+cookiefinder/tomato-disease-multiple-sources              Tomato Disease Multiple Sources              1470231151  2022-10-01 10:24:56.097000           8376         83  0.875            
+asheniranga/leaf-disease-dataset-combination              Leaf Disease Dataset (combination)            798477293  2022-01-09 14:23:28.590000           4745         57  0.75             
