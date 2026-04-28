@@ -84,97 +84,146 @@ def load_models():
 
 
 # ===========================================================================
-# Grad-CAM — implémentation robuste par nom de couche
+# Grad-CAM — pipeline à 3 méthodes en cascade
 # ===========================================================================
-def _find_last_conv_output(model: tf.keras.Model):
-    """Retourne la couche 'out_relu' (objet Layer) dans la hiérarchie du modèle."""
-    # Essai 1 : chercher directement dans les couches du modèle
-    for layer in reversed(model.layers):
-        if layer.name == "out_relu":
-            return layer          # retourne la couche, pas .output
-    # Essai 2 : chercher dans les sous-modèles (MobileNetV2 emboîtté)
+
+def _gradcam_method1(model, img_tensor, n_classes):
+    """Méthode 1 : Grad-CAM classique via recherche récursive de out_relu."""
+    last_conv_layer = None
+    # Chercher dans toutes les couches (plat + hiérarchique)
     for layer in model.layers:
+        if layer.name == "out_relu":
+            last_conv_layer = layer
+            break
         if isinstance(layer, tf.keras.Model):
-            for sublayer in reversed(layer.layers):
+            for sublayer in layer.layers:
                 if sublayer.name == "out_relu":
-                    return sublayer    # retourne la couche
-    # Essai 3 : sous-modèle MobileNetV2 directement
+                    last_conv_layer = sublayer
+                    break
+        if last_conv_layer:
+            break
+
+    if last_conv_layer is None:
+        return None
+
+    # Construire grad_model à 2 sorties avec l'output de la couche trouvée
+    try:
+        grad_model = tf.keras.Model(
+            inputs=model.inputs,
+            outputs=[last_conv_layer.output, model.output]
+        )
+    except Exception:
+        return None
+
+    with tf.GradientTape() as tape:
+        tape.watch(img_tensor)
+        conv_out, preds = grad_model(img_tensor, training=False)
+        top_class  = tf.argmax(preds[0])
+        one_hot    = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
+        loss       = tf.reduce_sum(preds * one_hot)
+
+    grads = tape.gradient(loss, conv_out)
+    if grads is None:
+        return None
+
+    pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
+    heatmap = tf.nn.relu(
+        tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
+    ).numpy()
+
+    if heatmap.max() > 1e-8:
+        return (heatmap / heatmap.max()).astype(np.float32)
+    return None
+
+
+def _gradcam_method2(model, img_tensor, n_classes):
+    """Méthode 2 : Grad-CAM via sous-modèle MobileNetV2 entier."""
+    mobilenet_layer = None
     for layer in model.layers:
         if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
-            return layer          # retourne le sous-modèle entier
+            mobilenet_layer = layer
+            break
+
+    if mobilenet_layer is None:
+        return None
+
+    try:
+        grad_model = tf.keras.Model(
+            inputs=model.inputs,
+            outputs=[mobilenet_layer.output, model.output]
+        )
+    except Exception:
+        return None
+
+    with tf.GradientTape() as tape:
+        tape.watch(img_tensor)
+        conv_out, preds = grad_model(img_tensor, training=False)
+        top_class = tf.argmax(preds[0])
+        one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
+        loss      = tf.reduce_sum(preds * one_hot)
+
+    grads = tape.gradient(loss, conv_out)
+    if grads is None or conv_out.shape[-1] is None:
+        return None
+
+    pooled  = tf.reduce_mean(grads, axis=(0, 1, 2))
+    heatmap = tf.nn.relu(
+        tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
+    ).numpy()
+
+    if heatmap.max() > 1e-8:
+        return (heatmap / heatmap.max()).astype(np.float32)
     return None
+
+
+def _gradcam_method3_saliency(model, img_tensor, n_classes):
+    """Méthode 3 (fallback) : Input Gradient Saliency — toujours fonctionnel."""
+    img_var = tf.Variable(img_tensor, dtype=tf.float32)
+    with tf.GradientTape() as tape:
+        preds    = model(img_var, training=False)
+        top_class = tf.argmax(preds[0])
+        one_hot  = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
+        loss     = tf.reduce_sum(preds * one_hot)
+
+    grads   = tape.gradient(loss, img_var)           # (1, 224, 224, 3)
+    saliency = tf.reduce_mean(tf.abs(grads[0]), axis=-1).numpy()  # (224, 224)
+    if saliency.max() > 1e-10:
+        saliency /= saliency.max()
+    # Réduire à 7×7 pour le pipeline identique
+    saliency_small = cv2.resize(saliency, (7, 7), interpolation=cv2.INTER_AREA)
+    return saliency_small.astype(np.float32)
 
 
 def make_gradcam_heatmap(img_array: np.ndarray,
                          model: tf.keras.Model) -> np.ndarray:
     """
-    Grad-CAM robuste pour Keras 3 / TF 2.x.
-
-    Approche :
-      1. Trouver la dernière couche convolutive spatiale (out_relu, 7×7×1280)
-      2. Construire un grad_model à deux sorties
-      3. Approche one-hot différentiable pour la sélection de classe
-      4. GradientTape watchant img_tensor AVANT le forward pass
+    Génère une heatmap d'activation en cascade :
+      1. Grad-CAM via out_relu (MobileNetV2 standard)
+      2. Grad-CAM via sous-modèle MobileNetV2 entier
+      3. Input Gradient Saliency (toujours fonctionnel)
     """
-    try:
-        last_conv_layer = _find_last_conv_output(model)
-        if last_conv_layer is None:
-            print("⚠ Grad-CAM : couche out_relu introuvable")
-            return np.zeros((7, 7), dtype=np.float32)
+    n_classes  = model.output_shape[-1]
+    img_tensor = tf.cast(img_array, tf.float32)
 
-        grad_model = tf.keras.Model(
-            inputs=model.inputs,
-            outputs=[last_conv_layer.output, model.output]   # .output ici
-        )
+    # --- Essai 1 ---
+    heatmap = _gradcam_method1(model, img_tensor, n_classes)
+    if heatmap is not None:
+        print(f"  Grad-CAM méthode 1 ✅  max={heatmap.max():.4f}")
+        return heatmap
 
-        img_tensor = tf.Variable(
-            tf.cast(img_array, tf.float32), trainable=False
-        )
+    # --- Essai 2 ---
+    heatmap = _gradcam_method2(model, img_tensor, n_classes)
+    if heatmap is not None:
+        print(f"  Grad-CAM méthode 2 ✅  max={heatmap.max():.4f}")
+        return heatmap
 
-        with tf.GradientTape() as tape:
-            tape.watch(img_tensor)
-            conv_outputs, predictions = grad_model(img_tensor, training=False)
-            # One-hot différentiable sans conversion Python int (graph-safe)
-            top_class   = tf.argmax(predictions[0])           # tensor int64
-            n_classes   = predictions.shape[-1]
-            one_hot     = tf.one_hot(top_class, n_classes)    # (12,)
-            one_hot     = tf.expand_dims(one_hot, 0)          # (1, 12)
-            class_score = tf.reduce_sum(predictions * one_hot)  # scalaire
+    # --- Essai 3 (fallback saliency) ---
+    print("  ⚠ Grad-CAM méthodes 1&2 échouées → Input Gradient Saliency")
+    heatmap = _gradcam_method3_saliency(model, img_tensor, n_classes)
+    print(f"  Saliency méthode 3 ✅  max={heatmap.max():.4f}")
+    return heatmap
 
-        # d(class_score) / d(conv_outputs)
-        grads = tape.gradient(class_score, conv_outputs)
 
-        if grads is None:
-            print("⚠ Grad-CAM : gradient None → fallback sur gradient/input")
-            return np.zeros((7, 7), dtype=np.float32)
-
-        # Pooling spatial des gradients (Grad-CAM weighting)
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))        # (1280,)
-        # Pondération des feature maps
-        heatmap = tf.reduce_sum(
-            tf.multiply(pooled_grads, conv_outputs[0]), axis=-1      # (7, 7)
-        )
-        heatmap = tf.nn.relu(heatmap).numpy()
-
-        # Debug
-        print(f"  Grad-CAM → max={heatmap.max():.4f}  mean={heatmap.mean():.4f}"
-              f"  classe={top_class}")
-
-        if heatmap.max() > 1e-8:
-            heatmap = heatmap / heatmap.max()
-        else:
-            # Gradient nul : utiliser les activations brutes comme fallback
-            print("  ⚠ Gradients nuls → fallback sur activations brutes")
-            raw = conv_outputs[0].numpy()
-            heatmap = np.mean(raw, axis=-1)
-            if heatmap.max() > 0:
-                heatmap /= heatmap.max()
-
-        return heatmap.astype(np.float32)
-
-    except Exception as exc:
-        print(f"⚠ Grad-CAM exception : {exc}")
-        return np.zeros((7, 7), dtype=np.float32)
 
 
 def blend_gradcam(img_path: str, heatmap: np.ndarray) -> tuple:
