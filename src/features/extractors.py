@@ -1,17 +1,36 @@
 """
 extractors.py
 -------------
-Extraction de caractéristiques visuelles à trois niveaux :
-  1. Couleur  — Histogramme HSV 3D (512 dimensions)
-  2. Texture  — GLCM Haralick via scikit-image (20 dimensions)
-  3. Forme    — Moments de Hu + métriques de contour (10 dimensions)
+Extraction de caractéristiques visuelles à quatre niveaux :
+  1. Couleur RGB — Histogramme RGB 1D (8 bins × 3 canaux = 24 dimensions)
+  2. Couleur HSV — Histogramme HSV 3D (8×8×8 = 512 dimensions)
+  3. Texture     — GLCM Haralick via scikit-image (20 dimensions)
+  4. Forme       — Moments de Hu + métriques de contour (10 dimensions)
 
-Vecteur final : ~542 dimensions
+Vecteur final : 566 dimensions
 """
 
 import cv2
 import numpy as np
 from skimage.feature import graycomatrix, graycoprops
+
+
+# ---------------------------------------------------------------------------
+# 0. COULEUR — Histogramme RGB (comparaison avec HSV)
+# ---------------------------------------------------------------------------
+def extract_rgb_histogram(image_rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """
+    Histogramme RGB 1D calculé sur chaque canal séparément.
+    Bins : 8 par canal → 3 × 8 = 24 valeurs normalisées.
+
+    Utilisé pour la comparaison visuelle RGB vs HSV dans le notebook.
+    """
+    features = []
+    for channel in range(3):  # R, G, B
+        hist = cv2.calcHist([image_rgb], [channel], mask, [8], [0, 256])
+        cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+        features.append(hist.flatten())
+    return np.concatenate(features)  # 24 valeurs
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +134,12 @@ def extract_features(image_rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
       - Couleur  : 512 valeurs  (histogramme HSV)
       - Texture  :  20 valeurs  (GLCM Haralick)
       - Forme    :  10 valeurs  (Hu Moments + métriques)
-    Total : 542 dimensions.
+    Total : 566 dimensions.
     """
-    color   = extract_color_histogram(image_rgb, mask)   # 512
+    rgb     = extract_rgb_histogram(image_rgb, mask)      #  24
+    color   = extract_color_histogram(image_rgb, mask)    # 512
     texture = extract_glcm_texture(image_rgb, mask)       #  20
     shape   = extract_shape_features(mask)                #  10
 
-    return np.concatenate([color, texture, shape]).astype(np.float32)
+    return np.concatenate([rgb, color, texture, shape]).astype(np.float32)
+
