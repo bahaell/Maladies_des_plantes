@@ -115,9 +115,172 @@ cells.append(cell_code([
 # ============================================================
 cells.append(cell_md([
     "## 3. Prétraitement des Images\n\n",
-    "**Split stratifié 70/15/15** avec graine aléatoire fixée (seed=42) "
-    "pour assurer la **reproductibilité**.\n\n",
-    "Chaque sous-ensemble contient exactement les mêmes 12 classes.\n"
+    "Le prétraitement conditionne la qualité de toute la chaîne de traitement. "
+    "Voici les 4 étapes appliquées à chaque image du dataset :\n\n",
+    "| Étape | Opération | Bibliothèque | Paramètres clés | Justification |\n",
+    "|-------|-----------|-------------|-----------------|---------------|\n",
+    "| 1 | **Redimensionnement** | OpenCV | 224×224, INTER_AREA | Taille imposée par MobileNetV2 ; cohérente ML/DL |\n",
+    "| 2 | **Filtrage Gaussien** | OpenCV | Noyau 5×5, σ=auto | Supprime le bruit JPEG/capteur sans détruire les contours |\n",
+    "| 3 | **Conversion RGB→HSV** | OpenCV | — | Sépare la teinte (H) de la luminosité (V), robuste à l'éclairage |\n",
+    "| 4 | **Split 70/15/15** | Python stdlib | seed=42 | Reproductibilité et absence de fuite train→test |\n"
+]))
+
+# 3.1 — Redimensionnement
+cells.append(cell_md([
+    "### 3.1 Redimensionnement (224×224)\n\n",
+    "**Pourquoi 224×224 ?**  \n",
+    "MobileNetV2, notre architecture DL, a été pré-entraîné sur ImageNet avec des entrées de "
+    "taille **224×224×3**. Pour que le Transfer Learning soit cohérent, toutes les images "
+    "doivent avoir exactement cette résolution. On utilise la même taille en ML pour que les "
+    "vecteurs de features soient comparables entre eux.\n\n",
+    "**Choix de l'interpolation `INTER_AREA` :**  \n",
+    "Optimal pour la **réduction** d'image (les images PlantVillage font ~256×256 à 800×600). "
+    "Contrairement à INTER_LINEAR, il fait une vraie moyenne des pixels sans aliasing.\n"
+]))
+cells.append(cell_code([
+    "VALID_EXT = {'.jpg','.jpeg','.png','.bmp'}\n",
+    "\n",
+    "# Sélection d une image de démonstration\n",
+    "demo_cls_path = PROCESSED_DIR / 'train' / 'Tomato___Late_blight'\n",
+    "demo_file = next(f for f in demo_cls_path.iterdir() if f.suffix.lower() in VALID_EXT)\n",
+    "img_original = cv2.cvtColor(cv2.imread(str(demo_file)), cv2.COLOR_BGR2RGB)\n",
+    "img_resized  = cv2.resize(img_original, (224, 224), interpolation=cv2.INTER_AREA)\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(10, 4))\n",
+    "axes[0].imshow(img_original)\n",
+    "axes[0].set_title(f'Original ({img_original.shape[1]}×{img_original.shape[0]} px)')\n",
+    "axes[0].axis('off')\n",
+    "axes[1].imshow(img_resized)\n",
+    "axes[1].set_title('Redimensionné (224×224 px)')\n",
+    "axes[1].axis('off')\n",
+    "plt.suptitle('Étape 1 — Redimensionnement INTER_AREA', fontsize=12, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+]))
+
+# 3.2 — Filtrage Gaussien
+cells.append(cell_md([
+    "### 3.2 Filtrage du Bruit (Filtre Gaussien 5×5)\n\n",
+    "**Problème :** Les images PlantVillage contiennent du bruit de capteur et des "
+    "artéfacts de compression JPEG (blocs 8×8 pixels visibles en agrandissant). "
+    "Ce bruit parasite l'extraction de texture (GLCM) et la segmentation HSV.\n\n",
+    "**Solution : Filtre Gaussien** `GaussianBlur(kernel=(5,5), σ=auto)`\n\n",
+    "- Le **noyau 5×5** est un compromis étudié : assez grand pour lisser le bruit "
+    "de capteur (1–2 px), mais assez petit pour **préserver les contours** des taches "
+    "foliaires (bords > 3 px en général).\n",
+    "- **σ=0 (auto)** : OpenCV calcule σ = 0.3 × ((ksize-1)×0.5 - 1) + 0.8 ≈ **1.1** "
+    "pour un noyau 5×5. Valeur standard et conservatrice.\n\n",
+    "**Alternative étudiée et rejetée :** Le filtre Médian (MedianBlur) est meilleur pour "
+    "le bruit impulsionnel (sel & poivre), mais plus lent et moins approprié ici où "
+    "le bruit est Gaussien (capteur photo).\n"
+]))
+cells.append(cell_code([
+    "img_noisy    = img_resized.copy()\n",
+    "img_denoised = cv2.GaussianBlur(img_resized, (5, 5), sigmaX=0)\n",
+    "\n",
+    "# Zoom sur un patch 64×64 pour rendre visible la différence\n",
+    "patch_orig = img_noisy[80:144, 80:144]\n",
+    "patch_den  = img_denoised[80:144, 80:144]\n",
+    "\n",
+    "fig, axes = plt.subplots(2, 2, figsize=(11, 8))\n",
+    "axes[0][0].imshow(img_noisy);   axes[0][0].set_title('Avant filtrage'); axes[0][0].axis('off')\n",
+    "axes[0][1].imshow(img_denoised); axes[0][1].set_title('Après Gaussien 5×5'); axes[0][1].axis('off')\n",
+    "axes[1][0].imshow(patch_orig);   axes[1][0].set_title('Zoom avant (64×64)'); axes[1][0].axis('off')\n",
+    "axes[1][1].imshow(patch_den);    axes[1][1].set_title('Zoom après (64×64)'); axes[1][1].axis('off')\n",
+    "plt.suptitle('Étape 2 — Filtrage Gaussien (noyau 5×5)', fontsize=12, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+    "print(f'PSNR estimé (proxy) : {10 * np.log10(255**2 / np.mean((img_noisy.astype(float) - img_denoised.astype(float))**2 + 1e-10)):.1f} dB')\n",
+]))
+
+# 3.3 — Conversion RGB → HSV
+cells.append(cell_md([
+    "### 3.3 Conversion RGB → HSV\n\n",
+    "**Pourquoi HSV et pas RGB ?**  \n",
+    "En RGB, une feuille verte sous forte lumière a les mêmes composantes que "
+    "le gazon sous lumière normale. La segmentation par seuillage est impossible.\n\n",
+    "En HSV, la **Teinte (H)** reste stable quelle que soit l'intensité lumineuse :\n",
+    "- Feuille verte saine → H ≈ 60–95° (quel que soit l'éclairage)\n",
+    "- Zone nécrosée → H ≈ 5–22° (brun/orange)\n\n",
+    "La **Saturation (S)** et la **Valeur (V)** permettent d'exclure le fond blanc/gris "
+    "(faible S) et les zones trop sombres (faible V).\n"
+]))
+cells.append(cell_code([
+    "img_hsv = cv2.cvtColor(img_denoised, cv2.COLOR_RGB2HSV)\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 4, figsize=(16, 4))\n",
+    "panels = [\n",
+    "    (img_denoised,         'Image RGB (après filtre)',  None),\n",
+    "    (img_hsv[:,:,0],       'Canal H — Teinte',          'hsv'),\n",
+    "    (img_hsv[:,:,1],       'Canal S — Saturation',      'Greens'),\n",
+    "    (img_hsv[:,:,2],       'Canal V — Valeur/Luminosité','gray'),\n",
+    "]\n",
+    "for ax, (data, title, cmap) in zip(axes, panels):\n",
+    "    ax.imshow(data, cmap=cmap)\n",
+    "    ax.set_title(title, fontsize=9)\n",
+    "    ax.axis('off')\n",
+    "plt.suptitle('Étape 3 — Décomposition en canaux HSV', fontsize=12, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+]))
+
+# 3.4 — Analyse des histogrammes
+cells.append(cell_md([
+    "### 3.4 Analyse des Histogrammes de Couleur\n\n",
+    "L'histogramme de couleur est l'une des représentations les plus utiles en "
+    "classification d'images. Chaque maladie crée une **signature spectrale distincte** :\n",
+    "- **Mildiou (Late blight)** → dominante brune/noire (H faible, S élevée, V basse)\n",
+    "- **Feuille saine** → dominante verte (H ≈ 60–90°, S et V modérées)\n",
+    "- **Rouille (Common rust)** → dominante orangée (H ≈ 20–30°)\n\n",
+    "Nous comparons les histogrammes H (Teinte) de 4 classes différentes pour illustrer "
+    "la séparabilité des maladies dans l'espace HSV.\n"
+]))
+cells.append(cell_code([
+    "compare_classes = [\n",
+    "    ('Tomato___healthy',            'Tomate Saine',    '#2ecc71'),\n",
+    "    ('Tomato___Late_blight',        'Mildiou Tomate',  '#8e44ad'),\n",
+    "    ('Corn_(maize)___Common_rust_', 'Rouille Maïs',    '#e74c3c'),\n",
+    "    ('Potato___Early_blight',       'Alternariose',    '#e67e22'),\n",
+    "]\n",
+    "\n",
+    "fig, axes = plt.subplots(2, 2, figsize=(14, 9))\n",
+    "for ax, (cls, label, color) in zip(axes.flatten(), compare_classes):\n",
+    "    cls_dir = PROCESSED_DIR / 'train' / cls\n",
+    "    all_hist = np.zeros(180)\n",
+    "    count = 0\n",
+    "    for f in list(cls_dir.iterdir())[:30]:  # 30 images max pour la vitesse\n",
+    "        if f.suffix.lower() not in VALID_EXT: continue\n",
+    "        img = cv2.imread(str(f))\n",
+    "        if img is None: continue\n",
+    "        img = cv2.resize(img, (224, 224))\n",
+    "        img = cv2.GaussianBlur(img, (5, 5), 0)\n",
+    "        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)\n",
+    "        h_hist = cv2.calcHist([hsv], [0], None, [180], [0, 180]).flatten()\n",
+    "        all_hist += h_hist\n",
+    "        count += 1\n",
+    "    all_hist /= (count + 1e-10)\n",
+    "    all_hist /= (all_hist.max() + 1e-10)  # normalisation\n",
+    "    ax.plot(all_hist, color=color, linewidth=1.5)\n",
+    "    ax.fill_between(range(180), all_hist, alpha=0.25, color=color)\n",
+    "    ax.axvline(22,  color='gray', linestyle='--', alpha=0.5, label='H=22 (seuil vert)')\n",
+    "    ax.axvline(95,  color='gray', linestyle=':',  alpha=0.5, label='H=95')\n",
+    "    ax.set_title(f'Histogramme Teinte (H) — {label}', fontsize=10)\n",
+    "    ax.set_xlabel('Valeur de Teinte (0–180°)')\n",
+    "    ax.set_ylabel('Fréquence normalisée')\n",
+    "    ax.legend(fontsize=7)\n",
+    "    ax.grid(alpha=0.3)\n",
+    "plt.suptitle('Analyse des Histogrammes HSV — Signature spectrale par maladie',\n",
+    "             fontsize=12, fontweight='bold')\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+]))
+
+# 3.5 — Split
+cells.append(cell_md([
+    "### 3.5 Partitionnement Stratifié (70 / 15 / 15)\n\n",
+    "**Seed fixée à 42** pour la reproductibilité totale (même résultats entre "
+    "deux exécutions). Le nettoyage préalable du dossier `processed/` empêche "
+    "toute contamination des données entre les splits.\n"
 ]))
 cells.append(cell_code([
     "# Vérification du split\n",
@@ -131,27 +294,6 @@ cells.append(cell_code([
     "        print(f'  {split.upper():<6} : {n_cls:>2} classes | {total:>6} images')\n",
     "    else:\n",
     "        print(f'  {split.upper():<6} : NON GÉNÉRÉ — lancez splitter.py')\n",
-]))
-cells.append(cell_code([
-    "# Exemples d images par classe\n",
-    "VALID_EXT = {'.jpg','.jpeg','.png','.bmp'}\n",
-    "sample_classes = list(CLASSES_12[:6])\n",
-    "fig, axes = plt.subplots(2, 3, figsize=(14, 8))\n",
-    "for ax, cls in zip(axes.flatten(), sample_classes):\n",
-    "    cls_dir = PROCESSED_DIR / 'train' / cls\n",
-    "    if cls_dir.exists():\n",
-    "        imgs = [f for f in cls_dir.iterdir() if f.suffix.lower() in VALID_EXT]\n",
-    "        if imgs:\n",
-    "            img = cv2.imread(str(imgs[0]))\n",
-    "            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)\n",
-    "            img = cv2.resize(img, (224,224))\n",
-    "            ax.imshow(img)\n",
-    "    short_name = cls.split('___')[-1].replace('_',' ')\n",
-    "    ax.set_title(short_name, fontsize=9)\n",
-    "    ax.axis('off')\n",
-    "plt.suptitle('Exemples d images du dataset (224×224)', fontsize=13)\n",
-    "plt.tight_layout()\n",
-    "plt.show()\n",
 ]))
 
 # ============================================================
