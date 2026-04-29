@@ -83,30 +83,13 @@ def load_models():
     return rf_data, svm_data, dl_model, classes
 
 
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-
 # ===========================================================================
 # Grad-CAM — pipeline à 3 méthodes en cascade
 # ===========================================================================
 
-def _clean_heatmap(heatmap):
-    """Supprime les artefacts sur les bords (padding) et normalise."""
-    if heatmap is None or heatmap.max() < 1e-8:
-        return None
-    # Supprimer les bords extrêmes qui capturent souvent du bruit de convolution (heatmap 7x7)
-    heatmap[0, :] = 0; heatmap[-1, :] = 0
-    heatmap[:, 0] = 0; heatmap[:, -1] = 0
-    
-    if heatmap.max() > 0:
-        return (heatmap / heatmap.max()).astype(np.float32)
-    return None
-
 def _gradcam_method1(model, img_tensor, n_classes):
     """Méthode 1 : Grad-CAM classique via out_relu."""
     try:
-        # Crucial : MobileNetV2 nécessite des pixels en [-1, 1]
-        preprocessed_img = preprocess_input(tf.identity(img_tensor))
-
         last_conv_layer = None
         for layer in model.layers:
             if layer.name == "out_relu":
@@ -129,8 +112,8 @@ def _gradcam_method1(model, img_tensor, n_classes):
         )
 
         with tf.GradientTape() as tape:
-            tape.watch(preprocessed_img)
-            conv_out, preds = grad_model(preprocessed_img, training=False)
+            tape.watch(img_tensor)
+            conv_out, preds = grad_model(img_tensor, training=False)
             top_class = tf.argmax(preds[0])
             one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
             loss      = tf.reduce_sum(preds * one_hot)
@@ -144,7 +127,9 @@ def _gradcam_method1(model, img_tensor, n_classes):
             tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
         ).numpy()
 
-        return _clean_heatmap(heatmap)
+        if heatmap.max() > 1e-8:
+            return (heatmap / heatmap.max()).astype(np.float32)
+        return None
 
     except Exception as e:
         print(f"  Méthode 1 échouée : {type(e).__name__}")
@@ -246,41 +231,30 @@ def make_gradcam_heatmap(img_array: np.ndarray,
 def blend_gradcam(img_path: str, heatmap: np.ndarray) -> tuple:
     """
     Superpose la heatmap Grad-CAM sur l'image originale.
-    Utilise la segmentation pour nettoyer le fond.
+    Retourne (colored_heatmap, superimposed).
     """
-    from src.vision.segmentation import segment_leaf
-    
-    # 1. Charger l'image
     img = cv2.imread(str(img_path))
     if img is None:
-        raise ValueError(f"Image introuvable : {img_path}")
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_224 = cv2.resize(img_rgb, (224, 224))
+        raise ValueError(f"Image introuvable ou illisible : {img_path}")
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (224, 224))
 
-    # 2. Obtenir le masque de la feuille (notre segmentation HSV)
-    # segment_leaf retourne (orig, mask, seg)
-    _, mask, _ = segment_leaf(img_path)
-    mask_224 = cv2.resize(mask, (224, 224), interpolation=cv2.INTER_NEAREST)
-    mask_bool = (mask_224 > 0).astype(np.float32)
-
-    # 3. Préparer la heatmap
+    # Redimensionner la heatmap (7,7) → (224,224) — INTER_CUBIC pour meilleur rendu
     heatmap_up = cv2.resize(heatmap.astype(np.float32), (224, 224),
                             interpolation=cv2.INTER_CUBIC)
-    
-    # --- NETTOYAGE : On multiplie par le masque pour effacer le fond ---
-    heatmap_up = heatmap_up * mask_bool
-    
-    # 4. Lissage et normalisation
-    heatmap_up = cv2.GaussianBlur(heatmap_up, (11, 11), 0)
+    # Lissage Gaussien pour éliminer le côté pixelisé de la heatmap 7×7
+    heatmap_up = cv2.GaussianBlur(heatmap_up, (9, 9), 0)
+    # Renormaliser après blur
     if heatmap_up.max() > 0:
         heatmap_up = heatmap_up / heatmap_up.max()
-    
     heatmap_uint8 = np.uint8(255 * heatmap_up)
+
+    # Colormap JET via OpenCV
     colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
     colored = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
 
-    # 5. Fusion α-blending
-    superimposed = cv2.addWeighted(img_224, 0.7, colored, 0.3, 0)
+    # Fusion α-blending : 70% original + 30% heatmap pour plus de clarté
+    superimposed = cv2.addWeighted(img, 0.7, colored, 0.3, 0)
     return colored, superimposed
 
 
