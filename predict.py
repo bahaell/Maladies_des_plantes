@@ -246,30 +246,41 @@ def make_gradcam_heatmap(img_array: np.ndarray,
 def blend_gradcam(img_path: str, heatmap: np.ndarray) -> tuple:
     """
     Superpose la heatmap Grad-CAM sur l'image originale.
-    Retourne (colored_heatmap, superimposed).
+    Utilise la segmentation pour nettoyer le fond.
     """
+    from src.vision.segmentation import segment_leaf
+    
+    # 1. Charger l'image
     img = cv2.imread(str(img_path))
     if img is None:
-        raise ValueError(f"Image introuvable ou illisible : {img_path}")
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (224, 224))
+        raise ValueError(f"Image introuvable : {img_path}")
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_224 = cv2.resize(img_rgb, (224, 224))
 
-    # Redimensionner la heatmap (7,7) → (224,224) — INTER_CUBIC pour meilleur rendu
+    # 2. Obtenir le masque de la feuille (notre segmentation HSV)
+    # segment_leaf retourne (orig, mask, seg)
+    _, mask, _ = segment_leaf(img_path)
+    mask_224 = cv2.resize(mask, (224, 224), interpolation=cv2.INTER_NEAREST)
+    mask_bool = (mask_224 > 0).astype(np.float32)
+
+    # 3. Préparer la heatmap
     heatmap_up = cv2.resize(heatmap.astype(np.float32), (224, 224),
                             interpolation=cv2.INTER_CUBIC)
-    # Lissage Gaussien pour éliminer le côté pixelisé de la heatmap 7×7
-    heatmap_up = cv2.GaussianBlur(heatmap_up, (9, 9), 0)
-    # Renormaliser après blur
+    
+    # --- NETTOYAGE : On multiplie par le masque pour effacer le fond ---
+    heatmap_up = heatmap_up * mask_bool
+    
+    # 4. Lissage et normalisation
+    heatmap_up = cv2.GaussianBlur(heatmap_up, (11, 11), 0)
     if heatmap_up.max() > 0:
         heatmap_up = heatmap_up / heatmap_up.max()
+    
     heatmap_uint8 = np.uint8(255 * heatmap_up)
-
-    # Colormap JET via OpenCV
     colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
     colored = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
 
-    # Fusion α-blending : 70% original + 30% heatmap pour plus de clarté
-    superimposed = cv2.addWeighted(img, 0.7, colored, 0.3, 0)
+    # 5. Fusion α-blending
+    superimposed = cv2.addWeighted(img_224, 0.7, colored, 0.3, 0)
     return colored, superimposed
 
 
