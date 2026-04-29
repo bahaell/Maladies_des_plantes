@@ -83,13 +83,30 @@ def load_models():
     return rf_data, svm_data, dl_model, classes
 
 
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+
 # ===========================================================================
 # Grad-CAM — pipeline à 3 méthodes en cascade
 # ===========================================================================
 
+def _clean_heatmap(heatmap):
+    """Supprime les artefacts sur les bords (padding) et normalise."""
+    if heatmap is None or heatmap.max() < 1e-8:
+        return None
+    # Supprimer les bords extrêmes qui capturent souvent du bruit de convolution (heatmap 7x7)
+    heatmap[0, :] = 0; heatmap[-1, :] = 0
+    heatmap[:, 0] = 0; heatmap[:, -1] = 0
+    
+    if heatmap.max() > 0:
+        return (heatmap / heatmap.max()).astype(np.float32)
+    return None
+
 def _gradcam_method1(model, img_tensor, n_classes):
     """Méthode 1 : Grad-CAM classique via out_relu."""
     try:
+        # Crucial : MobileNetV2 nécessite des pixels en [-1, 1]
+        preprocessed_img = preprocess_input(tf.identity(img_tensor))
+
         last_conv_layer = None
         for layer in model.layers:
             if layer.name == "out_relu":
@@ -112,8 +129,8 @@ def _gradcam_method1(model, img_tensor, n_classes):
         )
 
         with tf.GradientTape() as tape:
-            tape.watch(img_tensor)
-            conv_out, preds = grad_model(img_tensor, training=False)
+            tape.watch(preprocessed_img)
+            conv_out, preds = grad_model(preprocessed_img, training=False)
             top_class = tf.argmax(preds[0])
             one_hot   = tf.expand_dims(tf.one_hot(top_class, n_classes), 0)
             loss      = tf.reduce_sum(preds * one_hot)
@@ -127,9 +144,7 @@ def _gradcam_method1(model, img_tensor, n_classes):
             tf.reduce_sum(tf.multiply(pooled, conv_out[0]), axis=-1)
         ).numpy()
 
-        if heatmap.max() > 1e-8:
-            return (heatmap / heatmap.max()).astype(np.float32)
-        return None
+        return _clean_heatmap(heatmap)
 
     except Exception as e:
         print(f"  Méthode 1 échouée : {type(e).__name__}")
